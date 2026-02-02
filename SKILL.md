@@ -1322,6 +1322,224 @@ dependencies {
 }
 ```
 
+## HikariCP Connection Pool
+
+### Production Profile (application-prod.yml)
+
+```yaml
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000        # 5 min
+      connection-timeout: 20000   # 20 sec
+      max-lifetime: 1200000       # 20 min
+      validation-timeout: 5000    # 5 sec
+      leak-detection-threshold: 60000  # 60 sec
+```
+
+### Dev / Stage Profile (application-dev.yml, application-stage.yml)
+
+```yaml
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 120000        # 2 min
+      connection-timeout: 10000   # 10 sec
+      max-lifetime: 600000        # 10 min
+      validation-timeout: 3000    # 3 sec
+      leak-detection-threshold: 30000  # 30 sec
+```
+
+### HikariCP Rules
+
+```
+✅ Prod и dev/stage в РАЗНЫХ профилях (application-prod.yml, application-dev.yml)
+✅ maximum-pool-size = кол-во ядер × 2 + кол-во дисков (формула HikariCP)
+✅ max-lifetime < PostgreSQL idle_in_transaction_session_timeout
+✅ leak-detection-threshold > самый долгий запрос
+✅ validation-timeout < connection-timeout
+
+❌ НЕ настраивать HikariCP в основном application.yml (только в профилях)
+❌ НЕ ставить maximum-pool-size > 30 (PostgreSQL default max_connections = 100)
+❌ НЕ ставить minimum-idle = maximum-pool-size (нет смысла в пуле)
+```
+
+---
+
+# Docker Configuration
+
+## Dockerfile Template
+
+```dockerfile
+FROM gradle:8.5.0-jdk21 AS build
+
+WORKDIR /app
+
+COPY build.gradle settings.gradle ./
+
+RUN gradle --no-daemon dependencies
+
+COPY src/ src/
+
+RUN gradle --no-daemon bootJar -x test
+
+FROM eclipse-temurin:21-jre-jammy
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+RUN addgroup --gid 1000 spring && \
+    adduser --uid 1000 --gid 1000 --disabled-password --gecos "" spring
+
+RUN mkdir -p /app/logs && \
+    chown -R spring:spring /app
+
+COPY --from=build /app/build/libs/*.jar app.jar
+
+USER spring:spring
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+## docker-compose.yml Template
+
+```yaml
+services:
+  service-name:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: service-name
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-prod}
+      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8}
+      - TZ=Asia/Bishkek
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-900M}
+        reservations:
+          memory: ${MEMORY_RESERVATION:-450M}
+```
+
+## .env.example Template
+
+```bash
+# =============================================================================
+# Service Name - Environment Configuration
+# Copy this file to .env and fill in actual values
+# =============================================================================
+#
+# SECURITY NOTICE:
+# - NEVER commit .env file to version control (.env is in .gitignore)
+# - Use strong, unique passwords for all secrets (min 12 chars, mixed case, digits, special chars)
+# - Rotate secrets periodically
+# - For production: consider using Docker Secrets, HashiCorp Vault, or cloud secret managers
+
+# Database
+# For production with TLS: jdbc:postgresql://host:5432/db?sslmode=require
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=mydb
+DB_USERNAME=postgres
+DB_PASSWORD=  # Required. Use a strong password (min 12 chars)
+
+# Security
+JWT_SECRET=  # Required. Min 256-bit (32+ chars), e.g.: openssl rand -base64 32
+
+# Application
+SPRING_PROFILES_ACTIVE=prod
+APP_PORT=8080
+
+# JVM (optional, auto-picked by JVM via JAVA_TOOL_OPTIONS)
+# JAVA_TOOL_OPTIONS=-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8
+
+# Docker Resources (optional)
+# MEMORY_LIMIT=900M
+# MEMORY_RESERVATION=450M
+```
+
+## JVM Container Configuration
+
+```
+JAVA_TOOL_OPTIONS=-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8
+```
+
+| Флаг | Назначение |
+|------|-----------|
+| `+UseContainerSupport` | JVM видит лимиты контейнера, а не хоста |
+| `MaxRAMPercentage=75.0` | JVM берёт 75% от memory limit контейнера |
+| `+UseG1GC` | G1 сборщик мусора (оптимален для контейнеров) |
+| `InitialRAMPercentage=50.0` | Начальный heap = 50% от лимита |
+| `Dfile.encoding=UTF-8` | Кодировка по умолчанию |
+
+### Рекомендуемые Memory Limits
+
+| Тип сервиса | Memory Limit | Memory Reservation | JVM MaxRAM (75%) |
+|-------------|-------------|-------------------|------------------|
+| Микросервис | 512M | 256M | ~384M |
+| Стандартный | 768M–900M | 384M–450M | ~576M–675M |
+| Тяжёлый (AI, отчёты) | 1.5G | 768M | ~1.1G |
+
+## Docker Rules
+
+```
+✅ Multi-stage build: gradle → eclipse-temurin:*-jre-jammy
+✅ Non-root user (spring:spring, UID/GID 1000)
+✅ Exec-form ENTRYPOINT: ["java", "-jar", "app.jar"]
+✅ JAVA_TOOL_OPTIONS вместо JAVA_OPTS (авто-подхват JVM, не нужен shell)
+✅ env_file: .env для секретов
+✅ environment: только для несекретных (SPRING_PROFILES_ACTIVE, TZ, JAVA_TOOL_OPTIONS)
+✅ healthcheck на /api/actuator/health
+✅ .env в .gitignore
+✅ .env.example с SECURITY NOTICE и требованиями к паролям
+
+❌ НЕ использовать shell-form ENTRYPOINT (command injection risk)
+❌ НЕ передавать секреты через environment: в docker-compose
+❌ НЕ использовать JAVA_OPTS (требует shell для подстановки)
+❌ НЕ коммитить .env файл
+❌ НЕ хардкодить секреты в application.yml (использовать ${ENV_VAR:})
+```
+
+## application.yml — Secrets Pattern
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:mydb}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:}
+
+jwt:
+  secret: ${JWT_SECRET:}
+```
+
+```
+✅ Все секреты через ${ENV_VAR:default}
+✅ Пустой default для обязательных секретов (приложение упадёт без них)
+✅ Разумный default для несекретных (localhost, 5432, postgres)
+
+❌ НЕ хардкодить реальные пароли, токены, ключи
+❌ НЕ ставить дефолтные JWT секреты для production
+```
+
 ---
 
 # Global Rules
