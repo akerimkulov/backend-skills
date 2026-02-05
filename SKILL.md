@@ -892,6 +892,252 @@ public class PageDomainResponse extends BasePageResponse<DomainResponse> {
 
 ---
 
+# Swagger/OpenAPI Documentation Patterns
+
+## Enum Documentation
+
+### Enum Template
+
+```java
+@Schema(description = "Статус записи")
+@Getter
+@RequiredArgsConstructor
+public enum StatusEnum {
+    @Schema(description = "Активная запись")
+    ACTIVE("Активный"),
+
+    @Schema(description = "Неактивная запись")
+    INACTIVE("Неактивный"),
+
+    @Schema(description = "В ожидании подтверждения")
+    PENDING("Ожидание"),
+
+    @Schema(description = "Запись отменена")
+    CANCELLED("Отменён");
+
+    private final String displayName;
+}
+```
+
+### Enum в DTO
+
+```java
+@Schema(description = "Статус",
+        example = "ACTIVE",
+        allowableValues = {"ACTIVE", "INACTIVE", "PENDING", "CANCELLED"})
+private StatusEnum status;
+```
+
+## DTO Class Documentation
+
+### Request DTO — полный пример
+
+```java
+@Schema(description = "Запрос на создание/обновление",
+        requiredProperties = {"code", "name"})
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class DomainRequest {
+
+    @Schema(description = "ID (null для создания, заполнен для обновления)",
+            example = "1",
+            nullable = true)
+    private Long id;
+
+    @Schema(description = "Код",
+            example = "CODE_001",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotBlank(message = "Код обязателен")
+    @Size(max = 50, message = "Код не должен превышать 50 символов")
+    private String code;
+
+    @Schema(description = "Название",
+            example = "Название записи",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotBlank(message = "Название обязательно")
+    @Size(max = 100, message = "Название не должно превышать 100 символов")
+    private String name;
+
+    @Schema(description = "ID связанной сущности",
+            example = "1",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotNull(message = "Связанная сущность обязательна")
+    private Long relatedId;
+
+    @Schema(description = "Сумма",
+            example = "1000.50",
+            minimum = "0.01")
+    @NotNull(message = "Сумма обязательна")
+    @Positive(message = "Сумма должна быть положительной")
+    @Digits(integer = 10, fraction = 2, message = "Неверный формат суммы")
+    private BigDecimal amount;
+
+    @Schema(description = "Описание",
+            example = "Текст описания",
+            maxLength = 500)
+    @Size(max = 500, message = "Описание не должно превышать 500 символов")
+    private String description;
+}
+```
+
+### Response DTO с вложенными объектами
+
+```java
+@Schema(description = "Ответ с данными")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class DomainResponse {
+
+    @Schema(description = "ID", example = "1")
+    private Long id;
+
+    @Schema(description = "Код", example = "CODE_001")
+    private String code;
+
+    @Schema(description = "Название", example = "Название записи")
+    private String name;
+
+    // Связанный объект — ПОЛНЫЙ Response DTO
+    @Schema(description = "Связанная сущность",
+            implementation = RelatedResponse.class)
+    private RelatedResponse related;
+
+    // Список объектов
+    @Schema(description = "Список элементов",
+            implementation = ItemResponse.class)
+    private List<ItemResponse> items;
+
+    @Schema(description = "Статус",
+            example = "ACTIVE",
+            allowableValues = {"ACTIVE", "INACTIVE", "PENDING", "CANCELLED"})
+    private StatusEnum status;
+
+    @Schema(description = "Сумма",
+            example = "1000.50",
+            format = "decimal")
+    private BigDecimal amount;
+
+    @Schema(description = "Дата создания",
+            example = "2024-01-15T10:30:00")
+    private LocalDateTime createdAt;
+
+    @Schema(description = "Дата обновления",
+            example = "2024-02-20T14:45:00")
+    private LocalDateTime updatedAt;
+}
+```
+
+## Controller Documentation
+
+### Полный пример контроллера с документацией
+
+```java
+@RestController
+@RequestMapping("${api.base-path}/domain-name")
+@RequiredArgsConstructor
+@SecurityRequirement(name = "bearerAuth")
+@Tag(name = "ОПЕРАЦИИ: Название",
+     description = "API для управления: создание, обновление, фильтрация, удаление")
+public class DomainController extends BaseController {
+
+    private final DomainService service;
+
+    @GetMapping("/{id}")
+    @Operation(
+        summary = "Получить по ID",
+        description = "Возвращает полную информацию включая связанные сущности",
+        responses = {
+            @ApiResponse(responseCode = "200", description = "Успешно",
+                content = @Content(schema = @Schema(implementation = DomainResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Не найдено",
+                content = @Content(schema = @Schema(implementation = BaseResponse.class)))
+        }
+    )
+    public ResponseEntity<? extends BaseResponse<?>> findById(
+            @Parameter(description = "ID записи", example = "1", required = true)
+            @PathVariable Long id) {
+        return createSuccessResponse(service.get(id));
+    }
+
+    @PostMapping("/filter")
+    @Operation(
+        summary = "Фильтрация с пагинацией",
+        description = "Поиск по критериям с пагинацией. Все параметры опциональны.",
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            description = "Параметры фильтрации",
+            content = @Content(schema = @Schema(implementation = DomainFilter.class))
+        ),
+        responses = {
+            @ApiResponse(responseCode = "200", description = "Успешно",
+                content = @Content(schema = @Schema(implementation = PageDomainResponse.class)))
+        }
+    )
+    public ResponseEntity<? extends BaseResponse<?>> filter(
+            @org.springframework.web.bind.annotation.RequestBody(required = false)
+            DomainFilter filter) {
+        return createSuccessResponse(service.findAllWithFilter(
+            filter != null ? filter : new DomainFilter()));
+    }
+
+    @PostMapping
+    @Operation(
+        summary = "Создать",
+        description = "Создание новой записи",
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            required = true,
+            content = @Content(schema = @Schema(implementation = DomainRequest.class))
+        ),
+        responses = {
+            @ApiResponse(responseCode = "200", description = "Успешно создано",
+                content = @Content(schema = @Schema(implementation = DomainResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Ошибка валидации",
+                content = @Content(schema = @Schema(implementation = BaseResponse.class))),
+            @ApiResponse(responseCode = "409", description = "Дублирование",
+                content = @Content(schema = @Schema(implementation = BaseResponse.class)))
+        }
+    )
+    public ResponseEntity<? extends BaseResponse<?>> create(
+            @Valid @org.springframework.web.bind.annotation.RequestBody DomainRequest request,
+            HttpServletRequest httpServletRequest) {
+        return createSuccessResponse(service.create(request, httpServletRequest));
+    }
+}
+```
+
+## Swagger Annotations Cheatsheet
+
+| Аннотация | Уровень | Назначение |
+|-----------|---------|------------|
+| `@Tag` | Класс | Группировка endpoints |
+| `@Operation` | Метод | Описание endpoint |
+| `@Parameter` | Параметр | Описание path/query параметра |
+| `@RequestBody` | Метод | Описание тела запроса (Swagger) |
+| `@ApiResponse` | Метод | Описание возможных ответов |
+| `@Schema` | Класс/Поле | Описание модели/поля |
+| `@ArraySchema` | Поле | Описание массива |
+| `@SecurityRequirement` | Класс | Требование авторизации |
+
+## Swagger Rules
+
+```
+✅ @Schema(description, example) на КАЖДОМ поле DTO
+✅ @Schema на каждом значении Enum с описанием
+✅ allowableValues для Enum полей в DTO
+✅ implementation для вложенных объектов
+✅ requiredMode = REQUIRED для обязательных полей
+✅ @Tag с категорией (СПРАВОЧНИК/ОПЕРАЦИИ/СИСТЕМА) на контроллере
+✅ @Operation(summary, description) на каждом endpoint
+✅ @ApiResponse для 200, 400, 404, 409 где применимо
+
+❌ НЕ оставлять поля без @Schema
+❌ НЕ оставлять Enum без описаний значений
+❌ НЕ забывать example для примитивных типов
+```
+
+---
+
 # MapStruct Mapper Patterns
 
 ## Mapper Template
@@ -1137,6 +1383,94 @@ CREATE INDEX IF NOT EXISTS idx_table_status ON table_name(status);
 CREATE INDEX IF NOT EXISTS idx_table_date ON table_name(operation_date DESC);
 ```
 
+## Table and Column Comments
+
+### Comment Template
+
+```sql
+-- Комментарии к таблице
+COMMENT ON TABLE hb_domains IS 'Справочник доменов';
+
+-- Комментарии к колонкам
+COMMENT ON COLUMN hb_domains.id IS 'Уникальный идентификатор';
+COMMENT ON COLUMN hb_domains.code IS 'Код записи (уникальный)';
+COMMENT ON COLUMN hb_domains.name IS 'Наименование';
+COMMENT ON COLUMN hb_domains.description IS 'Описание';
+COMMENT ON COLUMN hb_domains.amount IS 'Сумма';
+COMMENT ON COLUMN hb_domains.category_id IS 'ID категории (FK)';
+COMMENT ON COLUMN hb_domains.status IS 'Статус записи (ACTIVE, INACTIVE)';
+COMMENT ON COLUMN hb_domains.created_at IS 'Дата и время создания записи';
+COMMENT ON COLUMN hb_domains.created_by IS 'ID пользователя, создавшего запись';
+COMMENT ON COLUMN hb_domains.updated_at IS 'Дата и время последнего обновления';
+COMMENT ON COLUMN hb_domains.updated_by IS 'ID пользователя, обновившего запись';
+COMMENT ON COLUMN hb_domains.deleted IS 'Признак мягкого удаления';
+```
+
+### Full Migration Example
+
+```sql
+-- =====================================================
+-- V001__Create_Domains_Table.sql
+-- Справочник доменов
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS hb_domains (
+    id BIGSERIAL PRIMARY KEY,
+    code VARCHAR(50) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    amount DECIMAL(18,8),
+    category_id BIGINT NOT NULL REFERENCES hb_categories(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE')),
+
+    -- Audit fields
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by BIGINT,
+    deleted BOOLEAN DEFAULT FALSE
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_hb_domains_deleted ON hb_domains(deleted);
+CREATE INDEX IF NOT EXISTS idx_hb_domains_code ON hb_domains(code);
+CREATE INDEX IF NOT EXISTS idx_hb_domains_category ON hb_domains(category_id);
+CREATE INDEX IF NOT EXISTS idx_hb_domains_status ON hb_domains(status);
+
+-- Table comment
+COMMENT ON TABLE hb_domains IS 'Справочник доменов';
+
+-- Column comments
+COMMENT ON COLUMN hb_domains.id IS 'Уникальный идентификатор';
+COMMENT ON COLUMN hb_domains.code IS 'Код записи (уникальный)';
+COMMENT ON COLUMN hb_domains.name IS 'Наименование';
+COMMENT ON COLUMN hb_domains.description IS 'Описание';
+COMMENT ON COLUMN hb_domains.amount IS 'Сумма';
+COMMENT ON COLUMN hb_domains.category_id IS 'ID категории (FK)';
+COMMENT ON COLUMN hb_domains.status IS 'Статус записи (ACTIVE, INACTIVE)';
+COMMENT ON COLUMN hb_domains.created_at IS 'Дата и время создания записи';
+COMMENT ON COLUMN hb_domains.created_by IS 'ID пользователя, создавшего запись';
+COMMENT ON COLUMN hb_domains.updated_at IS 'Дата и время последнего обновления';
+COMMENT ON COLUMN hb_domains.updated_by IS 'ID пользователя, обновившего запись';
+COMMENT ON COLUMN hb_domains.deleted IS 'Признак мягкого удаления';
+
+-- Initial data (if needed)
+INSERT INTO hb_domains (code, name, description, category_id, status)
+VALUES
+    ('DEFAULT', 'По умолчанию', 'Запись по умолчанию', 1, 'ACTIVE')
+ON CONFLICT (code) DO NOTHING;
+```
+
+## Migration Structure Order
+
+```
+1. CREATE TABLE (поля в порядке: PK → unique → required → optional → FK → audit)
+2. CREATE INDEX (deleted → FK → фильтруемые поля)
+3. COMMENT ON TABLE
+4. COMMENT ON COLUMN (в порядке полей таблицы)
+5. INSERT начальных данных (если нужно)
+```
+
 ## Flyway Rules
 
 ```
@@ -1145,6 +1479,7 @@ CREATE INDEX IF NOT EXISTS idx_table_date ON table_name(operation_date DESC);
 ✅ BIGSERIAL для PRIMARY KEY
 ✅ DEFAULT FALSE для deleted
 ✅ DEFAULT CURRENT_TIMESTAMP для created_at
+✅ COMMENT ON TABLE и COMMENT ON COLUMN для документации
 ✅ Комментарии на русском
 ✅ Индекс на каждый FK
 ✅ Индекс на deleted поле
@@ -1153,6 +1488,7 @@ CREATE INDEX IF NOT EXISTS idx_table_date ON table_name(operation_date DESC);
 ❌ НЕ забывать deleted поле
 ❌ НЕ забывать audit поля (created_at, created_by, updated_at, updated_by)
 ❌ НЕ использовать CASCADE DELETE (soft delete)
+❌ НЕ забывать COMMENT ON TABLE и COMMENT ON COLUMN
 ```
 
 ## Naming Conventions
@@ -1262,12 +1598,708 @@ boolean isAuth = AuthenticationUtils.isAuthenticated();
 User user = CurrentUserUtils.getCurrentUser();
 
 // Получить доступные ID (multi-tenant)
-List<Long> depotIds = CurrentUserUtils.getAccessibleDepotIds();
+List<Long> organizationIds = CurrentUserUtils.getAccessibleOrganizationIds();
 
 // Валидация доступа
-AccessUtils.validateAccess(entityId);
-List<Long> filtered = AccessUtils.applyFilter(requestIds);
+AccessUtils.validateOrganizationAccess(organizationId);
+AccessUtils.validateResourceAccess(entity.getOrganizationId());
+List<Long> filtered = AccessUtils.applyOrganizationFilter(requestIds);
 ```
+
+---
+
+# Security & Authorization
+
+## Архитектура безопасности
+
+Авторизация реализуется на **уровне Service**, а не через аннотации на контроллерах:
+
+| Уровень | Что проверяется |
+|---------|----------------|
+| SecurityConfig | Публичные endpoints, базовая аутентификация |
+| JwtAuthenticationFilter | Валидация токена, загрузка ролей |
+| Service Layer | Бизнес-логика доступа, multi-tenant фильтрация |
+| Utility Classes | Проверка ролей, получение текущего пользователя |
+
+## Database Schema
+
+### sys_users Table
+
+```sql
+CREATE TABLE IF NOT EXISTS sys_users (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    full_name VARCHAR(200),
+    is_active BOOLEAN DEFAULT TRUE,
+    last_login_at TIMESTAMP,
+
+    -- Multi-tenant (опционально)
+    organization_id BIGINT REFERENCES hb_organizations(id),
+    owner_id BIGINT,
+
+    -- Audit
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by BIGINT,
+    deleted BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sys_users_username ON sys_users(username);
+CREATE INDEX IF NOT EXISTS idx_sys_users_deleted ON sys_users(deleted);
+CREATE INDEX IF NOT EXISTS idx_sys_users_organization ON sys_users(organization_id);
+
+COMMENT ON TABLE sys_users IS 'Системные пользователи';
+COMMENT ON COLUMN sys_users.organization_id IS 'ID организации для multi-tenant фильтрации';
+COMMENT ON COLUMN sys_users.owner_id IS 'ID владельца для дополнительной фильтрации (READONLY роль)';
+```
+
+### sys_roles Table
+
+```sql
+CREATE TABLE IF NOT EXISTS sys_roles (
+    id BIGSERIAL PRIMARY KEY,
+    code VARCHAR(50) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    priority INTEGER NOT NULL DEFAULT 100,
+    is_system BOOLEAN DEFAULT FALSE,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by BIGINT,
+    deleted BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sys_roles_code ON sys_roles(code);
+CREATE INDEX IF NOT EXISTS idx_sys_roles_deleted ON sys_roles(deleted);
+
+COMMENT ON TABLE sys_roles IS 'Справочник ролей';
+COMMENT ON COLUMN sys_roles.priority IS 'Приоритет роли (меньше = выше полномочия)';
+COMMENT ON COLUMN sys_roles.is_system IS 'Системная роль (нельзя удалить/изменить код)';
+
+-- Базовые роли с иерархией приоритетов
+INSERT INTO sys_roles (code, name, description, priority, is_system) VALUES
+    ('SUPERADMIN', 'Суперадминистратор', 'Полный доступ к системе', 1, true),
+    ('ADMIN', 'Администратор', 'Администрирование', 10, true),
+    ('MANAGER', 'Менеджер', 'Управление операциями', 20, false),
+    ('OPERATOR', 'Оператор', 'Выполнение операций', 30, false),
+    ('AUDITOR', 'Аудитор', 'Аудит и контроль', 35, false),
+    ('READONLY', 'Только просмотр', 'Просмотр данных', 40, false)
+ON CONFLICT (code) DO NOTHING;
+```
+
+### sys_user_roles Table
+
+```sql
+CREATE TABLE IF NOT EXISTS sys_user_roles (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES sys_users(id),
+    role_id BIGINT NOT NULL REFERENCES sys_roles(id),
+    is_active BOOLEAN DEFAULT TRUE,
+    assigned_by BIGINT REFERENCES sys_users(id),
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT,
+
+    UNIQUE(user_id, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sys_user_roles_user ON sys_user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_sys_user_roles_role ON sys_user_roles(role_id);
+CREATE INDEX IF NOT EXISTS idx_sys_user_roles_active ON sys_user_roles(is_active);
+
+COMMENT ON TABLE sys_user_roles IS 'Связь пользователей и ролей (M:N)';
+COMMENT ON COLUMN sys_user_roles.is_active IS 'Активна ли роль у пользователя';
+COMMENT ON COLUMN sys_user_roles.assigned_by IS 'Кто назначил роль';
+```
+
+## User Entity
+
+```java
+@Entity
+@Table(name = "sys_users")
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class User extends BaseEntity {
+
+    @Column(nullable = false, unique = true, length = 50)
+    private String username;
+
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
+    @Column(length = 100)
+    private String email;
+
+    @Column(name = "full_name", length = 200)
+    private String fullName;
+
+    @Column(name = "is_active")
+    @Builder.Default
+    private Boolean isActive = true;
+
+    @Column(name = "last_login_at")
+    private LocalDateTime lastLoginAt;
+
+    // Multi-tenant
+    @Column(name = "organization_id")
+    private Long organizationId;
+
+    @Column(name = "owner_id")
+    private Long ownerId;
+
+    // Связь с ролями
+    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<UserRole> userRoles = new ArrayList<>();
+
+    // ========== Helper Methods ==========
+
+    public boolean hasRole(String roleCode) {
+        return userRoles.stream()
+            .filter(ur -> ur.getIsActive() && !ur.getRole().getDeleted())
+            .anyMatch(ur -> ur.getRole().getCode().equals(roleCode));
+    }
+
+    public boolean hasAnyRole(String... roleCodes) {
+        Set<String> codes = Set.of(roleCodes);
+        return userRoles.stream()
+            .filter(ur -> ur.getIsActive() && !ur.getRole().getDeleted())
+            .anyMatch(ur -> codes.contains(ur.getRole().getCode()));
+    }
+
+    public List<String> getActiveRoleCodes() {
+        return userRoles.stream()
+            .filter(ur -> ur.getIsActive() && !ur.getRole().getDeleted())
+            .map(ur -> ur.getRole().getCode())
+            .toList();
+    }
+
+    public List<Role> getActiveRoles() {
+        return userRoles.stream()
+            .filter(ur -> ur.getIsActive() && !ur.getRole().getDeleted())
+            .map(UserRole::getRole)
+            .toList();
+    }
+}
+```
+
+## Role Entity
+
+```java
+@Entity
+@Table(name = "sys_roles")
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class Role extends BaseEntity {
+
+    @Column(nullable = false, unique = true, length = 50)
+    private String code;
+
+    @Column(nullable = false, length = 100)
+    private String name;
+
+    @Column(length = 500)
+    private String description;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer priority = 100;
+
+    @Column(name = "is_system")
+    @Builder.Default
+    private Boolean isSystem = false;
+}
+```
+
+## SecurityConfig (минимальный)
+
+```java
+@Configuration
+@EnableWebSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtFilter;
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(AbstractHttpConfigurer::disable)
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .sessionManagement(session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                // Public
+                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/actuator/health/**").permitAll()
+                .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+
+                // Admin only для actuator
+                .requestMatchers("/actuator/**").hasRole("ADMIN")
+
+                // Всё остальное — просто authenticated (логика в Service)
+                .anyRequest().authenticated()
+            )
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.of("*"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of("*"));
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+}
+```
+
+## JwtAuthenticationFilter
+
+```java
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private final JwtUtils jwtUtils;
+    private final UserRepository userRepository;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+        try {
+            String jwt = parseJwt(request);
+
+            if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
+                String username = jwtUtils.getUsernameFromJwtToken(jwt);
+
+                // Проверка активности пользователя
+                if (!userRepository.existsByUsernameAndIsActiveTrueAndDeletedFalse(username)) {
+                    log.warn("User is not active: {}", username);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
+                // Загрузка ролей отдельным запросом (избегаем LazyInitializationException)
+                List<String> roleCodes = userRepository.findActiveRoleCodesByUsername(username);
+
+                List<SimpleGrantedAuthority> authorities = roleCodes.stream()
+                    .map(code -> new SimpleGrantedAuthority("ROLE_" + code))
+                    .toList();
+
+                UsernamePasswordAuthenticationToken authentication =
+                    new UsernamePasswordAuthenticationToken(username, null, authorities);
+                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            }
+        } catch (Exception e) {
+            log.error("Cannot set user authentication: {}", e.getMessage());
+        }
+
+        filterChain.doFilter(request, response);
+    }
+
+    private String parseJwt(HttpServletRequest request) {
+        String headerAuth = request.getHeader("Authorization");
+        if (StringUtils.hasText(headerAuth) && headerAuth.startsWith("Bearer ")) {
+            return headerAuth.substring(7);
+        }
+        return null;
+    }
+}
+```
+
+## Security Utilities
+
+### SecurityUtils — проверка ролей
+
+```java
+@Component
+@RequiredArgsConstructor
+public class SecurityUtils {
+
+    public boolean hasAnyRole(String... roles) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            return false;
+        }
+
+        Set<String> userRoles = auth.getAuthorities().stream()
+            .map(GrantedAuthority::getAuthority)
+            .map(r -> r.replace("ROLE_", ""))
+            .collect(Collectors.toSet());
+
+        return Arrays.stream(roles).anyMatch(userRoles::contains);
+    }
+
+    public boolean isSuperAdmin() {
+        return hasAnyRole("SUPERADMIN");
+    }
+
+    public boolean isAdmin() {
+        return hasAnyRole("SUPERADMIN", "ADMIN");
+    }
+
+    public boolean isManager() {
+        return hasAnyRole("SUPERADMIN", "ADMIN", "MANAGER");
+    }
+
+    public boolean isOperator() {
+        return hasAnyRole("SUPERADMIN", "ADMIN", "MANAGER", "OPERATOR");
+    }
+
+    public boolean isReadOnly() {
+        return hasAnyRole("READONLY");
+    }
+}
+```
+
+### CurrentUserUtils — получение текущего пользователя
+
+```java
+@Component
+@RequiredArgsConstructor
+public class CurrentUserUtils {
+
+    private final UserRepository userRepository;
+
+    public User getCurrentUser() {
+        String username = getCurrentUsername();
+        return userRepository.findByUsernameAndDeletedFalse(username)
+            .orElseThrow(() -> new AuthenticationException("Пользователь не найден"));
+    }
+
+    public String getCurrentUsername() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new AuthenticationException("Пользователь не аутентифицирован");
+        }
+        return auth.getName();
+    }
+
+    public Long getCurrentUserId() {
+        return getCurrentUser().getId();
+    }
+
+    /**
+     * Возвращает список ID организаций, к которым у пользователя есть доступ.
+     * Пустой список означает доступ ко всем организациям.
+     */
+    public List<Long> getAccessibleOrganizationIds() {
+        User user = getCurrentUser();
+
+        // SUPERADMIN/ADMIN — доступ ко всем
+        if (user.hasAnyRole("SUPERADMIN", "ADMIN")) {
+            return Collections.emptyList(); // пустой = все
+        }
+
+        // Остальные — только своя организация
+        if (user.getOrganizationId() != null) {
+            return List.of(user.getOrganizationId());
+        }
+
+        return Collections.emptyList();
+    }
+}
+```
+
+### AccessUtils — multi-tenant фильтрация
+
+```java
+@Component
+@RequiredArgsConstructor
+public class AccessUtils {
+
+    private final CurrentUserUtils currentUserUtils;
+    private final SecurityUtils securityUtils;
+
+    /**
+     * Применяет фильтр по организации к списку ID.
+     * Возвращает пересечение запрошенных ID и доступных пользователю.
+     */
+    public List<Long> applyOrganizationFilter(List<Long> requestedIds) {
+        List<Long> accessibleIds = currentUserUtils.getAccessibleOrganizationIds();
+
+        // Пустой список = доступ ко всем
+        if (accessibleIds.isEmpty()) {
+            return requestedIds;
+        }
+
+        // Если не запросили конкретные — возвращаем доступные
+        if (requestedIds == null || requestedIds.isEmpty()) {
+            return accessibleIds;
+        }
+
+        // Пересечение
+        return requestedIds.stream()
+            .filter(accessibleIds::contains)
+            .toList();
+    }
+
+    /**
+     * Проверяет доступ к конкретной организации.
+     */
+    public void validateOrganizationAccess(Long organizationId) {
+        List<Long> accessibleIds = currentUserUtils.getAccessibleOrganizationIds();
+
+        if (accessibleIds.isEmpty()) {
+            return; // доступ ко всем
+        }
+
+        if (!accessibleIds.contains(organizationId)) {
+            throw new AuthorizationException("Нет доступа к организации: " + organizationId);
+        }
+    }
+
+    /**
+     * Проверяет доступ к ресурсу по его organizationId.
+     */
+    public void validateResourceAccess(Long resourceOrganizationId) {
+        validateOrganizationAccess(resourceOrganizationId);
+    }
+
+    /**
+     * Проверяет, может ли текущий пользователь выполнять операцию.
+     */
+    public void validateOperation(String operation) {
+        switch (operation) {
+            case "CREATE", "UPDATE" -> {
+                if (!securityUtils.isOperator()) {
+                    throw new AuthorizationException("Недостаточно прав для операции: " + operation);
+                }
+            }
+            case "DELETE" -> {
+                if (!securityUtils.isManager()) {
+                    throw new AuthorizationException("Недостаточно прав для удаления");
+                }
+            }
+        }
+    }
+}
+```
+
+## RoleHierarchyValidator — валидация иерархии ролей
+
+```java
+@Component
+@RequiredArgsConstructor
+public class RoleHierarchyValidator {
+
+    private final RoleRepository roleRepository;
+
+    /**
+     * Проверяет, может ли текущий пользователь назначить указанную роль.
+     * Правило: можно назначать только роли с БОЛЬШИМ priority (ниже в иерархии).
+     */
+    public void validateRoleAssignment(User currentUser, Role roleToAssign) {
+        Role highestRole = getHighestPriorityRole(currentUser);
+
+        if (highestRole == null) {
+            throw new AuthorizationException("У пользователя нет активных ролей");
+        }
+
+        // SUPERADMIN может назначать любые роли
+        if ("SUPERADMIN".equals(highestRole.getCode())) {
+            return;
+        }
+
+        // Остальные могут назначать только роли ниже своей
+        if (roleToAssign.getPriority() <= highestRole.getPriority()) {
+            throw new RoleHierarchyViolationException(
+                String.format("Нельзя назначить роль %s (priority=%d). " +
+                    "Ваша роль %s (priority=%d) не позволяет это.",
+                    roleToAssign.getCode(), roleToAssign.getPriority(),
+                    highestRole.getCode(), highestRole.getPriority())
+            );
+        }
+    }
+
+    /**
+     * Возвращает роль с наименьшим priority (высшие полномочия).
+     */
+    public Role getHighestPriorityRole(User user) {
+        return user.getActiveRoles().stream()
+            .min(Comparator.comparing(Role::getPriority))
+            .orElse(null);
+    }
+
+    /**
+     * Проверяет, может ли пользователь управлять другими пользователями.
+     */
+    public boolean canManageUsers(User user) {
+        return user.hasAnyRole("SUPERADMIN", "ADMIN", "MANAGER");
+    }
+}
+```
+
+## Service-Level Authorization Pattern
+
+### Контроллер (БЕЗ аннотаций безопасности)
+
+```java
+@RestController
+@RequestMapping("${api.base-path}/domain-name")
+@RequiredArgsConstructor
+@Tag(name = "ОПЕРАЦИИ: Название")
+public class DomainController extends BaseController {
+
+    private final DomainService service;
+
+    @PostMapping
+    public ResponseEntity<? extends BaseResponse<?>> create(
+            @Valid @RequestBody DomainRequest request,
+            HttpServletRequest httpServletRequest) {
+        // Авторизация внутри сервиса
+        return createSuccessResponse(service.create(request, httpServletRequest));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<? extends BaseResponse<?>> findById(@PathVariable Long id) {
+        // Авторизация внутри сервиса
+        return createSuccessResponse(service.get(id));
+    }
+
+    @PostMapping("/filter")
+    public ResponseEntity<? extends BaseResponse<?>> filter(
+            @RequestBody(required = false) DomainFilter filter) {
+        // Автоматическая фильтрация по организациям внутри сервиса
+        return createSuccessResponse(service.findAllWithFilter(
+            filter != null ? filter : new DomainFilter()));
+    }
+}
+```
+
+### Service с проверкой доступа
+
+```java
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class DomainServiceImpl implements DomainService {
+
+    private final DomainRepository repository;
+    private final DomainMapper mapper;
+    private final CurrentUserUtils currentUserUtils;
+    private final AccessUtils accessUtils;
+    private final SecurityUtils securityUtils;
+
+    @Override
+    @Transactional
+    public DomainResponse create(DomainRequest request, HttpServletRequest httpServletRequest) {
+        // 1. Проверка прав на операцию
+        accessUtils.validateOperation("CREATE");
+
+        // 2. Проверка доступа к организации
+        accessUtils.validateOrganizationAccess(request.getOrganizationId());
+
+        // 3. Бизнес-логика создания
+        Domain entity = mapper.toEntity(request);
+        Domain saved = repository.save(entity);
+
+        log.info("Entity created: id={}, by={}", saved.getId(), currentUserUtils.getCurrentUsername());
+
+        return mapper.toResponse(saved);
+    }
+
+    @Override
+    public DomainResponse get(Long id) {
+        Domain entity = findById(id);
+
+        // Проверка доступа к организации сущности
+        accessUtils.validateResourceAccess(entity.getOrganizationId());
+
+        return mapper.toResponse(entity);
+    }
+
+    @Override
+    public PageDomainResponse findAllWithFilter(DomainFilter filter) {
+        // Автоматическая фильтрация по доступным организациям
+        List<Long> orgIds = accessUtils.applyOrganizationFilter(filter.getOrganizationIds());
+        filter.setOrganizationIds(orgIds.isEmpty() ? null : orgIds);
+
+        // Для READONLY — дополнительная фильтрация по owner
+        if (securityUtils.isReadOnly()) {
+            User user = currentUserUtils.getCurrentUser();
+            if (user.getOwnerId() != null) {
+                filter.setOwnerId(user.getOwnerId());
+            }
+        }
+
+        Pageable pageable = PageRequest.of(
+            BaseController.getPage(filter.getPage()),
+            filter.getSize() != null ? filter.getSize() : 15,
+            Sort.by("createdAt").descending()
+        );
+
+        Specification<Domain> spec = DomainSpecifications.filterBy(filter);
+        Page<Domain> page = repository.findAll(spec, pageable);
+
+        return mapper.toPageResponse(page);
+    }
+
+    @Override
+    @Transactional
+    public void delete(Long id, HttpServletRequest httpServletRequest) {
+        // Проверка прав на удаление
+        accessUtils.validateOperation("DELETE");
+
+        Domain entity = findById(id);
+        accessUtils.validateResourceAccess(entity.getOrganizationId());
+
+        entity.markAsDeleted();
+        repository.save(entity);
+
+        log.info("Entity deleted: id={}, by={}", id, currentUserUtils.getCurrentUsername());
+    }
+}
+```
+
+## Security Rules (Service-Level подход)
+
+```
+✅ SecurityConfig — минимальный (только public endpoints и authenticated)
+✅ Авторизация в Service через AccessUtils, SecurityUtils
+✅ Автоматическая multi-tenant фильтрация в findAllWithFilter()
+✅ RoleHierarchyValidator для назначения ролей
+✅ Username в JWT (не user ID) — лучше для аудита
+✅ Отдельный запрос для ролей в JwtFilter (избегаем LazyInitializationException)
+
+❌ НЕ использовать @PreAuthorize на контроллерах
+❌ НЕ хардкодить роли в бизнес-логике (использовать SecurityUtils)
+❌ НЕ забывать validateResourceAccess() для single-entity операций
+❌ НЕ забывать applyOrganizationFilter() для list операций
+```
+
+## Сравнение подходов
+
+| Аспект | @PreAuthorize | Service-Level |
+|--------|---------------|---------------|
+| Место проверки | Контроллер | Сервис |
+| Гибкость | Средняя | Высокая |
+| Multi-tenant | Сложно | Естественно |
+| Тестирование | Mock Security Context | Mock Utils |
+| Читаемость | Аннотации | Явный код |
+| Рекомендация | Простые проекты | Enterprise/Multi-tenant |
 
 ---
 
@@ -1366,6 +2398,118 @@ spring:
 ❌ НЕ настраивать HikariCP в основном application.yml (только в профилях)
 ❌ НЕ ставить maximum-pool-size > 30 (PostgreSQL default max_connections = 100)
 ❌ НЕ ставить minimum-idle = maximum-pool-size (нет смысла в пуле)
+```
+
+---
+
+# Spring Actuator Configuration
+
+## Dependencies
+
+```groovy
+// build.gradle
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+```
+
+## application.yml Configuration
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when_authorized
+      show-components: when_authorized
+      probes:
+        enabled: true
+  health:
+    db:
+      enabled: true
+    diskspace:
+      enabled: true
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: ${spring.application.name}
+    version: @project.version@
+    description: Service description
+```
+
+## Security Configuration for Actuator
+
+```java
+// В SecurityConfig добавить:
+.authorizeHttpRequests(auth -> auth
+    // Actuator endpoints
+    .requestMatchers("/actuator/health/**").permitAll()
+    .requestMatchers("/actuator/info").permitAll()
+    .requestMatchers("/actuator/prometheus").permitAll()
+    .requestMatchers("/actuator/**").hasRole("ADMIN")
+    // ... остальные правила
+)
+```
+
+## Custom Health Indicator
+
+```java
+@Component
+public class DatabaseHealthIndicator implements HealthIndicator {
+
+    private final DataSource dataSource;
+
+    public DatabaseHealthIndicator(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    @Override
+    public Health health() {
+        try (Connection conn = dataSource.getConnection()) {
+            if (conn.isValid(1)) {
+                return Health.up()
+                    .withDetail("database", "PostgreSQL")
+                    .withDetail("status", "Connected")
+                    .build();
+            }
+        } catch (SQLException e) {
+            return Health.down()
+                .withDetail("error", e.getMessage())
+                .build();
+        }
+        return Health.down().build();
+    }
+}
+```
+
+## Actuator Endpoints Reference
+
+| Endpoint | Назначение | Доступ |
+|----------|-----------|--------|
+| `/actuator/health` | Статус приложения | Public |
+| `/actuator/health/liveness` | Kubernetes liveness probe | Public |
+| `/actuator/health/readiness` | Kubernetes readiness probe | Public |
+| `/actuator/info` | Информация о приложении | Public |
+| `/actuator/metrics` | Метрики приложения | Admin |
+| `/actuator/prometheus` | Метрики для Prometheus | Public/Internal |
+
+## Actuator Rules
+
+```
+✅ health и info — публичные (для мониторинга)
+✅ metrics, env, beans — только для ADMIN
+✅ show-details: when_authorized (не выдавать детали анонимам)
+✅ probes.enabled: true для Kubernetes
+✅ Использовать в Docker healthcheck
+
+❌ НЕ открывать /actuator/env публично (содержит секреты)
+❌ НЕ открывать /actuator/beans публично (раскрывает структуру)
+❌ НЕ использовать include: "*" в production
 ```
 
 ---
