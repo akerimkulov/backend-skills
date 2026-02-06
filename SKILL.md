@@ -2555,39 +2555,70 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
 
 ```yaml
 services:
-  service-name:
+  backend:
     build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: service-name
+      context: ../../backend
+      dockerfile: ../docker/backend/Dockerfile
+      args:
+        EXTERNAL_PORT: ${EXTERNAL_PORT:-8080}
+        INTERNAL_PORT: ${INTERNAL_PORT:-8080}
+    container_name: ${APP_NAME:-service-backend}
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-prod}
-      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8}
-      - TZ=Asia/Bishkek
-    ports:
-      - "${APP_PORT:-8080}:8080"
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Database Configuration (внешний PostgreSQL)
+      DB_HOST: ${DB_HOST:-localhost}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-app_database}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SCHEMA: ${DB_SCHEMA:-public}
+      # Port Configuration
+      INTERNAL_PORT: ${INTERNAL_PORT:-8080}
+      # JVM Configuration
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8}
+      TZ: ${TZ:-Asia/Bishkek}
+      # JWT Configuration
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-432000000}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-432000000}
+      # CORS Configuration
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      # HikariCP Connection Pool Configuration
+      HIKARI_MAX_POOL_SIZE: ${HIKARI_MAX_POOL_SIZE:-20}
+      HIKARI_MIN_IDLE: ${HIKARI_MIN_IDLE:-5}
+      HIKARI_IDLE_TIMEOUT: ${HIKARI_IDLE_TIMEOUT:-300000}
+      HIKARI_CONNECTION_TIMEOUT: ${HIKARI_CONNECTION_TIMEOUT:-20000}
+      HIKARI_MAX_LIFETIME: ${HIKARI_MAX_LIFETIME:-1200000}
+      HIKARI_VALIDATION_TIMEOUT: ${HIKARI_VALIDATION_TIMEOUT:-5000}
+      HIKARI_LEAK_DETECTION: ${HIKARI_LEAK_DETECTION:-60000}
+    volumes:
+      - app_logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${INTERNAL_PORT:-8080}/api/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 90s
     deploy:
       resources:
         limits:
           memory: ${MEMORY_LIMIT:-900M}
         reservations:
           memory: ${MEMORY_RESERVATION:-450M}
+
+volumes:
+  app_logs:
+    driver: local
 ```
+
+**Примечание:** PostgreSQL — внешний сервис, НЕ включается в docker-compose. DB_HOST указывает на внешний хост БД.
 
 ## .env.example Template
 
 ```bash
 # =============================================================================
-# Service Name - Environment Configuration
+# Backend - Environment Configuration
 # Copy this file to .env and fill in actual values
 # =============================================================================
 #
@@ -2597,23 +2628,44 @@ services:
 # - Rotate secrets periodically
 # - For production: consider using Docker Secrets, HashiCorp Vault, or cloud secret managers
 
-# Database
-# For production with TLS: jdbc:postgresql://host:5432/db?sslmode=require
+# Spring Profile
+SPRING_PROFILES_ACTIVE=dev
+
+# Database Configuration (внешний PostgreSQL)
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=mydb
-DB_USERNAME=postgres
+DB_NAME=app_database
+DB_USER=postgres
 DB_PASSWORD=  # Required. Use a strong password (min 12 chars)
+DB_SCHEMA=public
 
-# Security
+# Port Configuration
+EXTERNAL_PORT=8080
+INTERNAL_PORT=8080
+
+# JWT Security
 JWT_SECRET=  # Required. Min 256-bit (32+ chars), e.g.: openssl rand -base64 32
+JWT_EXPIRATION=432000000
+JWT_REFRESH_EXPIRATION=432000000
 
-# Application
-SPRING_PROFILES_ACTIVE=prod
-APP_PORT=8080
+# CORS Configuration
+CORS_ALLOWED_ORIGINS=http://localhost:3000
 
 # JVM (optional, auto-picked by JVM via JAVA_TOOL_OPTIONS)
 # JAVA_TOOL_OPTIONS=-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8
+
+# Timezone
+TZ=Asia/Bishkek
+
+# Application
+APP_NAME=service-backend
+
+# HikariCP Connection Pool (optional)
+# HIKARI_MAX_POOL_SIZE=20
+# HIKARI_MIN_IDLE=5
+# HIKARI_IDLE_TIMEOUT=300000
+# HIKARI_CONNECTION_TIMEOUT=20000
+# HIKARI_MAX_LIFETIME=1200000
 
 # Docker Resources (optional)
 # MEMORY_LIMIT=900M
@@ -2642,6 +2694,40 @@ JAVA_TOOL_OPTIONS=-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1G
 | Стандартный | 768M–900M | 384M–450M | ~576M–675M |
 | Тяжёлый (AI, отчёты) | 1.5G | 768M | ~1.1G |
 
+## .dockerignore Template
+
+```
+.git
+.gitignore
+.idea
+.vscode
+*.md
+LICENSE
+
+# Build artifacts
+build/
+.gradle/
+bin/
+out/
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+
+# OS
+.DS_Store
+Thumbs.db
+```
+
 ## Docker Rules
 
 ```
@@ -2649,15 +2735,24 @@ JAVA_TOOL_OPTIONS=-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1G
 ✅ Non-root user (spring:spring, UID/GID 1000)
 ✅ Exec-form ENTRYPOINT: ["java", "-jar", "app.jar"]
 ✅ JAVA_TOOL_OPTIONS вместо JAVA_OPTS (авто-подхват JVM, не нужен shell)
-✅ env_file: .env для секретов
-✅ environment: только для несекретных (SPRING_PROFILES_ACTIVE, TZ, JAVA_TOOL_OPTIONS)
-✅ healthcheck на /api/actuator/health
+✅ PostgreSQL — внешний сервис (не в docker-compose)
+✅ DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SCHEMA — в environment
+✅ HikariCP pool настройки — в environment
+✅ JWT_SECRET, JWT_EXPIRATION, CORS_ALLOWED_ORIGINS — в environment
+✅ healthcheck через /api/actuator/health с start_period: 90s
+✅ deploy.resources.limits/reservations для ограничения памяти
+✅ volumes для логов (app_logs:/app/logs)
+✅ .env.example с SECURITY NOTICE и описанием всех переменных
+✅ .dockerignore в каждом проекте
 ✅ .env в .gitignore
-✅ .env.example с SECURITY NOTICE и требованиями к паролям
 
+❌ НЕ включать PostgreSQL в docker-compose (внешний сервис)
 ❌ НЕ использовать shell-form ENTRYPOINT (command injection risk)
-❌ НЕ передавать секреты через environment: в docker-compose
+❌ НЕ хардкодить credentials (использовать переменные окружения)
 ❌ НЕ использовать JAVA_OPTS (требует shell для подстановки)
+❌ НЕ забывать healthcheck (используется для мониторинга и оркестрации)
+❌ НЕ забывать resource limits (защита от OOM)
+❌ НЕ забывать .dockerignore (ускоряет build)
 ❌ НЕ коммитить .env файл
 ❌ НЕ хардкодить секреты в application.yml (использовать ${ENV_VAR:})
 ```
