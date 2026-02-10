@@ -1489,6 +1489,7 @@ ON CONFLICT (code) DO NOTHING;
 ❌ НЕ забывать audit поля (created_at, created_by, updated_at, updated_by)
 ❌ НЕ использовать CASCADE DELETE (soft delete)
 ❌ НЕ забывать COMMENT ON TABLE и COMMENT ON COLUMN
+❌ НЕ указывать schema в миграциях (НЕ использовать SET search_path, schema.table_name, CREATE TABLE schema.name — schema задаётся через Flyway/application.properties)
 ```
 
 ## Naming Conventions
